@@ -34,23 +34,28 @@ trigger ContactTrigger on Contact(before insert, after insert, after update) {
 	}
 //When a contact is inserted
 	// if DummyJSON_Id__c is less than or equal to 100, call the getDummyJSONUserFromId API
+	// up to limit of 50 future calls
 
 		if(Trigger.isInsert &&
 		Trigger.isAfter &&
 		!insertHasRun){
+			while(Limits.getFutureCalls() < 50){
 			for (Contact contact : Trigger.new) {
 			if (!String.isBlank(contact.DummyJSON_Id__c) &&  Integer.valueOf(contact.DummyJSON_Id__c) <= 100 &&  !System.isFuture() && !System.isBatch()) {
-				DummyJSonCallout.getDummyJSONUserFromId(contact.DummyJSON_Id__c);
+					DummyJSonCallout.getDummyJSONUserFromId(contact.DummyJSON_Id__c);
+				}
 			}			
 		}
 			insertHasRun = true;
 	}
 	//When a contact is updated
-	// if DummyJSON_Id__c is greater than 100, call the postCreateDummyJSONUser API
+	// if DummyJSON_Id__c is greater than 100, call the postCreateDummyJSONUser API up to limit
+	// of 50 future calls
 		if(Trigger.isUpdate &&
 		Trigger.isAfter &&
 		!updateHasRun){
-			for (Contact contact : Trigger.new) {
+			while(Limits.getFutureCalls() < 50){
+				for (Contact contact : Trigger.new) {
 			if (!String.isBlank(contact.DummyJSON_Id__c) &&  Integer.valueOf(contact.DummyJSON_Id__c) >100 &&  !System.isFuture() && !System.isBatch()) {
 				DummyJSonCallout.postCreateDummyJSONUser(contact.Id);
 			}			
@@ -58,7 +63,5 @@ trigger ContactTrigger on Contact(before insert, after insert, after update) {
 			updateHasRun = true;
 	}
 }
-
-
 	
-	
+}
