@@ -22,7 +22,7 @@
  */
 
 public with sharing class DummyJSONCallout {
-
+	private static final Integer TIMEOUT = 12000;
 	/* 
 	 * Question 1
      * Fetches user information from an external system https://dummyjson.com/user/{id} ('DummyJsonUser') based on the provided dummy user ID. 
@@ -33,21 +33,28 @@ public with sharing class DummyJSONCallout {
 	 * 
      * @param dummyUserId The ID of the user in the external system to fetch data for.
      */
-
+	@future(callout=true)
 	public static void getDummyJSONUserFromId(String dummyUserId) {
 		// Create HTTP request to send.
-
 		// Set the endpoint URL. Use direct URL or for best practices use Named Credential.
-
 		// Set the HTTP method to GET.
-
 		// Send the HTTP request and get the response.
-
 		// If the HTTP response code is successful, parse the JSON response and update the contact.
-		Contact cont = null;
-		upsert cont DummyJSON_Id__c; //insert/update from the JSON response using the external id (dummyUserId)
+		 Http h = new Http();
+    HttpRequest request = new HttpRequest();
+    request.setEndpoint('callout:DummyJsonNamedCredential' + '/' + dummyUserId);
+    request.setMethod('GET');
+    request.setTimeout(TIMEOUT);
+    HttpResponse resp = h.send(request);
+    ApiResponse apiResponse = new ApiResponse(resp);
+	if(apiResponse.isSuccess){
+		Contact cont = createContactFromJson(apiResponse.body);
+		cont.DummyJSON_Id__c = dummyUserId;
+	upsert cont DummyJSON_Id__c; //insert/update from the JSON response using the external id (dummyUserId)
+	} else {
+		throw new ApiResponseException(apiResponse.body);
 	}
-
+	}
 	/* 
 	 * Question 2
      * Transforms a JSON response from the external system https://dummyjson.com/users into a Salesforce Contact object.
@@ -64,19 +71,22 @@ public with sharing class DummyJSONCallout {
      * @return Contact The Salesforce Contact object populated with details from the JSON string.
      */
 	@TestVisible // Allows test class to see this method. Since it is private, it would not be visible otherwise.
-	private static Contact createContactFromJson(String jsonResponse) {
-		// Deserialize the JSON string into map of primitive data types.
-
-		// Create a new contact from the JSON response.
-
-		// Set the contact fields from the JSON response.
-
-		// Deserialize the address from the JSON response.
-
-		// Set the address fields on the contact.
-
-		return null;
-	}
+private static Contact createContactFromJson(String jsonResponse) {
+    ContactDTO.ContactObj newContactObj = (ContactDTO.ContactObj) JSON.deserialize(jsonResponse, ContactDTO.ContactObj.class);	
+    Contact cont = new Contact();
+    cont.FirstName = newContactObj.firstName;
+    cont.LastName = newContactObj.lastName;
+    cont.Email = newContactObj.email;
+    cont.Birthdate = Date.valueOf(newContactObj.birthDate);  // Changed from 'birthdate' to 'birthDate'
+    cont.Phone = newContactObj.phone;
+    ContactDTO.AddressObj newAddrObj = newContactObj.address;
+    cont.MailingStreet = newAddrObj.address;
+    cont.MailingCity = newAddrObj.city;
+    cont.MailingPostalCode = newAddrObj.postalCode;
+    cont.MailingState = newAddrObj.state;
+    cont.MailingCountry = newAddrObj.country;
+    return cont;
+}
 
 	/* 
 	 * Question 3
@@ -91,21 +101,30 @@ public with sharing class DummyJSONCallout {
      * 
      * @param contactId The Salesforce Contact ID used to generate the JSON payload for the external system.
      */
-	
+	@future(callout=true)
 	public static void postCreateDummyJSONUser(String contactId) {
 		// Create HTTP request to send.
-
 		// Set the endpoint URL. Use direct URL or for best practices use Named Credential.
-
 		// Set the HTTP method to POST.
-
 		// Set the body using generateDummyJsonUserPayload method.
-
 		// Send the HTTP request and get the response.
-
 		// If the HTTP response code is successful, update the contact.
+	Http h = new Http();
+    HttpRequest request = new HttpRequest();
+    request.setEndpoint('callout:DummyJsonNamedCredential' + '/add');
+    request.setMethod('POST');
+	request.setBody(generateDummyJsonUserPayload(contactId));
+	request.setTimeout(TIMEOUT);
+	HttpResponse response = h.send(request);
+	ApiResponse apiResponse = new ApiResponse(response);
+	if (apiResponse.isSuccess) {
+		Contact contactToUpdate = [SELECT Id, DummyJSON_Last_Updated__c FROM Contact WHERE Id = :contactId WITH USER_MODE LIMIT 1];
+		contactToUpdate.DummyJSON_Last_Updated__c = System.now();
+		update contactToUpdate;
+	} else {
+		throw new ApiResponseException(apiResponse.body);
 	}
-
+}
 	/*
 	 * Question 4
      * Generates a JSON payload based on a Salesforce Contact's fields to be sent to an external system https://dummyjson.com/users/add for user creation or update.
@@ -124,13 +143,40 @@ public with sharing class DummyJSONCallout {
 	@TestVisible // Allows test class to see this method. Since it is private, it would not be visible otherwise.
 	private static String generateDummyJsonUserPayload(String contactId) {
 		// Query the contact to get the field values to generate the JSON payload.
-
 		// Create a map of the field values.
-
 		// Serialize the map into a JSON string.
 		// Make sure to check that required contacts fields have a value. Default the value to unknown if it does not exists.
 		// Integration data can change over time. It is a best practice to add safeguards/validation to ensure the integration does not break.
+Map<Id, Contact> conLst = new Map<Id, Contact>([
+        SELECT Id, FirstName, LastName, Email, Phone, MailingStreet, MailingCity, 
+               MailingPostalCode, MailingState, MailingCountry, DummyJSON_Id__c
+        FROM Contact 
+        WHERE Id = :contactId 
+        WITH USER_MODE 
+    ]);
+    
+    if (conLst.values().size() == 0) {
+        throw new ApiResponseException('Contact not found');
+    } else {
+        Contact newCon = conLst.values()[0];
+        ContactDto.ContactObj conObj = new ContactDto.ContactObj();
+        conObj.id = newCon.DummyJSON_Id__c;
+		conObj.salesforceId = newCon.Id;
+        conObj.firstName = newCon.FirstName ?? 'Unknown';
+        conObj.lastName = newCon.LastName ?? 'Unknown';
+        conObj.email = newCon.Email ?? 'unknown@email.com';
+        conObj.phone = newCon.Phone ?? '0000000000';
 
-		return null;
-	}
+        ContactDto.AddressObj addressObj = new ContactDto.AddressObj();
+        conObj.address = addressObj;
+        addressObj.address = newCon.MailingStreet ?? 'Unknown Street';
+        addressObj.city = newCon.MailingCity ?? 'Unknown City';
+        addressObj.postalCode = newCon.MailingPostalCode ?? '00000';
+        addressObj.state = newCon.MailingState ?? 'Unknown State';
+        addressObj.country = newCon.MailingCountry ?? 'Unknown Country'; 
+        
+        return JSON.serialize(conObj, true);
+    }
+}
+	
 }
